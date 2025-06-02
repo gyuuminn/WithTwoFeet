@@ -17,12 +17,15 @@ class IMGDetector(Node):
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(current_dir, "yolov8n.pt")
+
         # #YOLO 모델 불러오기 
         self.model = YOLO(model_path)
         self.model.fuse()               # small speed-up
         self.get_logger().info(f'Loaded YOLOv8 model: {model_path}')
+
         # ───────── ROS 객체들 ─────────
         self.bridge = CvBridge()
+
         # subscribe raw image
         self.imgrw_sub = self.create_subscription(Image, '/camera/image_raw', self.image_cb, 10)
 
@@ -32,7 +35,8 @@ class IMGDetector(Node):
         # publish yolo+image
         self.pub_vis = self.create_publisher(Image, '/yolo/vis_image', 10)
 
-        self.id_map={} # raw track_id → 순차 label 번호
+        self.id_map = {}
+        self.center_id = None
         self.next_label = 1   # 다음에 줄 순차 번호
         
     # ── 콜백 ──────────────────────────
@@ -50,28 +54,54 @@ class IMGDetector(Node):
         # motor.py로 이전
         #REAL_HEIGHT_M = 1.7 # 사람 키 추정
         #FOCAL_LENGTH =548.66 #Camera_info로 계산한 값
-         
+
+        center = frame.shape[1] * 0.5          # 이미지 가로 중앙
+        closest = None
+        min_offset = float("inf")
+
         for det in results[0].boxes.cpu():
+            if det.id is None:          # 트래킹 ID 없는 건 패스
+                
+                continue
+            
             #Bounding Box 좌표
             x1, y1, x2, y2 = det.xyxy[0].tolist()
+
             cx = float((x1 + x2) * 0.5)     # numpy → py-float
             cy = float((y1 + y2) * 0.5)
             w  = float(x2 - x1)
             h  = float(y2 - y1)
 
+            offset = abs(cx - center)   # 중앙에서 얼마나 떨어졌나
+            if offset < min_offset:
+                min_offset, closest = offset, int(det.id.item())
+    
             #신뢰도, raw id
             conf = float(det.conf[0])
             raw_id = int(det.id.item()) if det.id is not None else None
               
-            # ── 순차 번호로 매핑: 0 → 사람1, 1 → 사람2 … ─
-            if raw_id is not None:
+            # # ── 순차 번호로 매핑: 0 → 사람1, 1 → 사람2 … ─
+            # if raw_id is not None:
+            #     if raw_id not in self.id_map:
+            #         self.id_map[raw_id] = self.next_label
+            #         self.next_label += 1
+            #     seq_id = self.id_map[raw_id]          # 사람 이름 번호
+            #     label_txt = f"Person{seq_id}"
+            # else:
+            #     label_txt = "Person"
+
+            if raw_id == self.center_id:      # 중앙 사람 → Label 1 고정
+                seq_id = 1
+                self.id_map[raw_id] = 1
+            else:
                 if raw_id not in self.id_map:
+                    # Label 2부터 순차 부여
+                    self.next_label = max(self.next_label, 2)
                     self.id_map[raw_id] = self.next_label
                     self.next_label += 1
-                seq_id = self.id_map[raw_id]          # 사람 이름 번호
-                label_txt = f"Person{seq_id}"
-            else:
-                label_txt = "Person"
+                seq_id = self.id_map[raw_id]
+
+            label_txt = f"Person{seq_id}"
 
             #Robot과 사람과의 거리 계산
             #distance_m = (REAL_HEIGHT_M * FOCAL_LENGTH) / (h + 1e-6)  # h는 bbox 높이
@@ -95,7 +125,9 @@ class IMGDetector(Node):
             # 시각화
             cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 2)
             cv2.putText(frame, f'{label_txt} {conf:.2f}',(int(x1), int(y1)-4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,255,0), 1, cv2.LINE_AA)
-            
+
+        # 이 raw_id를 “가장 중앙”으로 기록    
+        self.center_id = closest 
         #Det_array publish    
         self.det_pub.publish(det_array)
 
