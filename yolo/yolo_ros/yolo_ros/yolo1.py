@@ -6,6 +6,7 @@ import numpy as np
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
+from std_msgs.msg import Float32
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 from visualization_msgs.msg import Marker, MarkerArray
@@ -23,11 +24,16 @@ class IMGDetector(Node):
         # ───────── ROS 객체들 ─────────
         self.bridge = CvBridge()
         # subscribe raw image
-        self.sub = self.create_subscription(Image, '/camera/image_raw', self.image_cb, 10)
+        self.imgrw_sub = self.create_subscription(Image, '/camera/image_raw', self.image_cb, 10)
+
         # publish detections
-        self.pub = self.create_publisher(Detection2DArray, '/yolo/detections', 10)
-        # 이미지 퍼블리시
+        self.det_pub = self.create_publisher(Detection2DArray, '/yolo/detections', 10)
+
+        # publish yolo+image
         self.pub_vis = self.create_publisher(Image, '/yolo/vis_image', 10)
+
+        self.id_map={} # raw track_id → 순차 label 번호
+        self.next_label = 1   # 다음에 줄 순차 번호
         
     # ── 콜백 ──────────────────────────
     def image_cb(self, msg: Image):
@@ -41,43 +47,57 @@ class IMGDetector(Node):
         det_array = Detection2DArray()
         det_array.header = msg.header
 
-        # 첫 batch만 사용
-        for i, det in enumerate(results[0].boxes.cpu()):
+        # motor.py로 이전
+        #REAL_HEIGHT_M = 1.7 # 사람 키 추정
+        #FOCAL_LENGTH =548.66 #Camera_info로 계산한 값
+         
+        for det in results[0].boxes.cpu():
+            #Bounding Box 좌표
             x1, y1, x2, y2 = det.xyxy[0].tolist()
-            conf = float(det.conf[0])
-            track_id = int(det.id.item()) if det.id is not None else -1   
-            label  = f'person{track_id}' if track_id >= 0 else 'person'
-
-            # ROS2 Detection 메시지
-            det_ros = Detection2D()
             cx = float((x1 + x2) * 0.5)     # numpy → py-float
             cy = float((y1 + y2) * 0.5)
             w  = float(x2 - x1)
             h  = float(y2 - y1)
 
-            #Robot과 사람과의 거리
-            FOCAL_LENGTH = 320  # 추정 값
-            REAL_HEIGHT_M = 1.7 # 사람 키
-            distance_m = (REAL_HEIGHT_M * FOCAL_LENGTH) / (h + 1e-6)  # h는 bbox 높이
-            self.get_logger().info(f"Estimated distance: {distance_m:.2f} m")
+            #신뢰도, raw id
+            conf = float(det.conf[0])
+            raw_id = int(det.id.item()) if det.id is not None else None
+              
+            # ── 순차 번호로 매핑: 0 → 사람1, 1 → 사람2 … ─
+            if raw_id is not None:
+                if raw_id not in self.id_map:
+                    self.id_map[raw_id] = self.next_label
+                    self.next_label += 1
+                seq_id = self.id_map[raw_id]          # 사람 이름 번호
+                label_txt = f"Person{seq_id}"
+            else:
+                label_txt = "Person"
 
-            det_ros.bbox.center.position.x = cx
-            det_ros.bbox.center.position.y = cy
-            det_ros.bbox.size_x = w
-            det_ros.bbox.size_y = h
+            #Robot과 사람과의 거리 계산
+            #distance_m = (REAL_HEIGHT_M * FOCAL_LENGTH) / (h + 1e-6)  # h는 bbox 높이
+
+            #self.get_logger().info(f"[{label_txt}]  conf={conf:.2f}  h={h:.1f}px  dist={distance_m:.2f} m")
+
+            # ROS2 Detection 메시지
+            det_ros = Detection2D()
+            det_ros.bbox.center.position.x = float(cx)
+            det_ros.bbox.center.position.y = float(cy)
+            det_ros.bbox.size_x = float(w)
+            det_ros.bbox.size_y = float(h)
 
             #Hypo
             hypo = ObjectHypothesisWithPose()
-            hypo.hypothesis.class_id = label     # Jazzy 이후: class_id
+            hypo.hypothesis.class_id = label_txt     # Jazzy 이후: class_id, “사람1”
             hypo.hypothesis.score    = conf
             det_ros.results.append(hypo)
-        
             det_array.detections.append(det_ros)
 
             # 시각화
             cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 2)
-            cv2.putText(frame, f'{label} {conf:.2f}',(int(x1), int(y1)-4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,255,0), 1, cv2.LINE_AA)
-        self.pub.publish(det_array)
+            cv2.putText(frame, f'{label_txt} {conf:.2f}',(int(x1), int(y1)-4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,255,0), 1, cv2.LINE_AA)
+            
+        #Det_array publish    
+        self.det_pub.publish(det_array)
 
         # 디버그: 표시용 이미지
         vis_msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')

@@ -20,7 +20,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'yolo1 = yolo_ros.yolo1:main'
+            'yolo1 = yolo_ros.yolo1:main',
+            'joy_twist = yolo_ros.joy_twist:main',
+            'motor = yolo_ros.motor:main',
         ],
     },
 )
