@@ -21,8 +21,10 @@ class Humanfollower(Node):
         # ── 상태 변수 -----------------------------------------------
         self.is_rotating = False                     # 현재 회전 중인가?
         self.rotation_direction = 0  # +1: left, -1: right
+        self.last_move_log_time = 0.0
         self.last_rotation_log_time = 0.0  # 마지막 회전 로그 시간
         self.last_no_det_time = 0.0
+        self.move_log_interval = 1.5 
         self.rotation_log_interval = 1.5   # 초 단위 (1.5초마다 한 번 출력)
 
         # Mode publisher
@@ -79,12 +81,14 @@ class Humanfollower(Node):
         h_px  = det.bbox.size_y
         if h_px <= 0:
             return
+        
         dist  = (H_real * f_px) / h_px      # 단안(세로) 거리 추정
 
         # 로그
         #self.get_logger().info(f"[{label}]  bbox_h={h_px:.1f}px  ⇒  {dist:.2f} m")
 
         tgt_d  = self.get_parameter('target_dist').value
+
         err_d  = dist - tgt_d             # +면 멀다 / -면 가깝다
 
         # dead-zone(±10 cm) 안이면 멈춤
@@ -138,11 +142,23 @@ class Humanfollower(Node):
             mode = 8 if direction > 0 else 9
         else:
             if   deadzone_stop:  mode = 5 
-            if   err_d > 0.10: mode = 6               # 전진
-            elif err_d < -0.10: mode = 7               # 후진
-            else:            mode = 5             # 정지
+            else:
+                if   err_d > 0.10: mode = 6               # 전진
+                elif err_d < -0.10: mode = 7               # 후진
+                else:            mode = 5             # 정지
 
-        self.mode_pub.publish(UInt8(data=mode))
+            # ── 1.5초마다 이동/정지 로그 --------------------------- ★
+            now = time.time()
+            if now - self.last_move_log_time > self.move_log_interval:
+                if   mode == 6:
+                    self.get_logger().info(f"전진 중... 현재 거리{dist:.2f}m")
+                elif mode == 7:
+                    self.get_logger().info(f"후진 중...현재 거리{dist:.2f}m")
+                elif mode == 5:
+                    self.get_logger().info(f"목표 거리 도달, 정지!! 현재 거리{dist:.2f}m")
+                self.last_move_log_time = now
+
+                self.mode_pub.publish(UInt8(data=mode))
         
             # 디버그 로그 -----------------------------------------------------
             #self.get_logger().info(f"[{label}] d={dist:.2f} m  err={err_d:+.2f} "f"→ v={v:+.2f} m/s, ω={omega:+.2f} rad/s")
