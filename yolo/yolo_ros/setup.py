@@ -21,8 +21,11 @@ setup(
     entry_points={
         'console_scripts': [
             'yolo1 = yolo_ros.yolo1:main',
+            'mode = yolo_ros.mode_mux:main',
             'joy_twist = yolo_ros.joy_twist:main',
+            'joy_twist_teleop = yolo_ros.joy_twist_teleop:main',
             'motor = yolo_ros.motor:main',
+            'motor_bridge = yolo_ros.motor_bridge:main',
         ],
     },
 )
