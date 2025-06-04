@@ -2,39 +2,25 @@ import serial, rclpy, struct
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, UInt8
-from rclpy.qos import QoSProfile
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 
-class JoyTwistTeleop(Node):
+class JoyTwist(Node):
+    HEADER = 0xAA
     def __init__(self):
-        super().__init__("joy_twist_teleop")
-        qos_profile = QoSProfile(depth=10)
+        super().__init__("joy_twist")
+        # QoS: cmd_mode 는 10-개 버퍼, enable 은 latch(최근 1개 저장)
+        qos_cmd  = QoSProfile(depth=10)
+        qos_latch = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
 
-         # ────── 시리얼 설정 파라미터 ──────
-        self.declare_parameter("serial_port", "/tmp/ttyV0")
-        self.declare_parameter("baud_rate",   115200)
-        port = self.get_parameter("serial_port").value
-        baud = self.get_parameter("baud_rate").value
+        # Mode Publisher
+        self.mode_pub = self.create_publisher(UInt8, 'cmd_mode_manual', qos_cmd)
 
-        #시리얼 포트 관련
-        try:
-            self.ser = serial.Serial(port, baud, timeout=0.02)
-            self.get_logger().info(f"Opened serial {port} @ {baud}")
-        except serial.SerialException as e:
-            self.get_logger().error(f"Serial open failed: {e}")
-            self.ser = None
-
-        self.retry_timer = self.create_timer(1.0, self.try_open_serial)
-        #self.ser = serial.Serial("/dev/ttyUSB0", 115200, timeout=0.01) #Serial 포트 open
-        # On/off subscriber
-        self.bool_sub = self.create_subscription(Bool, 'robot_enable', self.bool_cb, 10)
-
-        # Mode subscriber
-        self.mode_sub = self.create_subscription(UInt8, 'cmd_mode', self.mode_cb, 10)
+        # Enable Publisher
+        self.en_pub   = self.create_publisher(Bool,  'robot_enable', qos_latch)
 
         # Joy subscriber
-        self.joy_sub = self.create_subscription(Joy,'joy', self.joy_cb, qos_profile)
+        self.joy_sub = self.create_subscription(Joy,'joy', self.joy_cb, qos_cmd)
 
-        #self.cmd_sub = self.create_subscription(Twist,'init_cmd_vel',self,auto_cb, qos_profile )
         # 버튼·축 매핑 파라미터
         self.declare_parameter("btn_cross", 1)
         self.declare_parameter("btn_circle", 2)
@@ -44,6 +30,9 @@ class JoyTwistTeleop(Node):
         self.declare_parameter("axis_turn", 0)
         self.declare_parameter("baxis_speed", 1) #십자
         self.declare_parameter("baxis_turn", 0)
+
+        self.drive_enabled = True
+        self.en_pub.publish(Bool(data=True))       # 처음엔 ON 상태로 래치
 
     def joy_cb(self, msg: Joy):
         # 파라미터 읽기
@@ -55,6 +44,14 @@ class JoyTwistTeleop(Node):
         ax_turn = self.get_parameter("axis_turn").value
         bax_spd = self.get_parameter("baxis_speed").value # 십자
         bax_turn = self.get_parameter("baxis_turn").value
+
+        # -------- Enable 토글 --------
+        # 버튼 edge 검출
+        if msg.buttons[btn_cr] == 1 and hasattr(self, '_prev_toggle') and self._prev_toggle == 0:
+            self.drive_enabled = not self.drive_enabled
+            self.en_pub.publish(Bool(data=self.drive_enabled))
+            self.get_logger().info(f'DRIVE {"ENABLED" if self.drive_enabled else "DISABLED"}')
+        self._prev_toggle = msg.buttons[btn_cr]
 
         # 1) 아날로그 스틱 값
         speed_raw = msg.axes[self.ax_spd]     # -1.0 ~ 1.0
@@ -86,52 +83,16 @@ class JoyTwistTeleop(Node):
             elif abs(turn) > abs(speed):
                 if turn > 0: mode = 8
                 elif turn < 0: mode = 9
-        self.send_mode(mode)
+
+        self.mode_pub.publish(UInt8(data=mode))
         
         # 출력 및 실행
         self.get_logger().info(f"Speed: {speed}, Turn: {turn}, Mode: {mode}")
 
-        # # 버튼 처리
-        # # 전진, 후진, 좌, 우, Enable/disable, camera shutter
-        # if msg.buttons[btn_cr]:
-        #     self.get_logger().info("Cross")
-        #     self.send_mode(11)              # 전진모드
-        # elif msg.buttons[btn_cir]:
-        #     self.get_logger().info("Circle")
-        #     self.send_mode(12)              # 후진모드
-        # elif msg.buttons[btn_tr]:
-        #     self.get_logger().info("Triangle")
-        #     self.send_mode(13)              # 정지
-        # elif msg.buttons[btn_sq]:
-        #     self.get_logger().info("Square")
-        #     self.send_mode(14) 
-
-    #def auto_cb(self):
-
-    # ───────── 시리얼 전송 헬퍼 ─────────
-    def send_mode(self, mode: int):
-        if self.ser is None or not self.ser.is_open:
-            return
-        frame = struct.pack("<BBB", 0xAA, 0x10, mode)
-        self.ser.write(frame)
-        self.get_logger().debug(f"TX → {frame.hex(' ')}")   # 헥사로 확인
-
-    def try_open_serial(self):
-        port = self.get_parameter("serial_port").value
-        baud = self.get_parameter("baud_rate").value
-        if self.ser is not None and self.ser.is_open:
-            self.retry_timer.cancel()           # 이미 열렸으면 타이머 종료
-            return
-        try:
-            self.ser = serial.Serial(port, baud, timeout=0.02)
-            self.get_logger().info("Serial re-opened!")
-        except serial.SerialException:
-            # 아직도 실패 → 다음 타이머 tick 때 또 시도
-            pass
 
 def main():
     rclpy.init()
-    node = JoyTwistTeleop()
+    node = JoyTwist()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()

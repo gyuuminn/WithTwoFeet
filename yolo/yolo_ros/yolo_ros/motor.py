@@ -28,7 +28,7 @@ class Humanfollower(Node):
         self.rotation_log_interval = 1.5   # 초 단위 (1.5초마다 한 번 출력)
 
         # Mode publisher
-        self.mode_pub = self.create_publisher(UInt8,'cmd_mode', qos_profile)
+        self.mode_pub = self.create_publisher(UInt8,'cmd_mode_auto', qos_profile)
 
         # Detection subscriber
         self.create_subscription(Detection2DArray,'/yolo/detections', self.cmd_based_dis,10)
@@ -158,7 +158,7 @@ class Humanfollower(Node):
                     self.get_logger().info(f"목표 거리 도달, 정지!! 현재 거리{dist:.2f}m")
                 self.last_move_log_time = now
 
-                self.mode_pub.publish(UInt8(data=mode))
+        self.mode_pub.publish(UInt8(data=mode))
         
             # 디버그 로그 -----------------------------------------------------
             #self.get_logger().info(f"[{label}] d={dist:.2f} m  err={err_d:+.2f} "f"→ v={v:+.2f} m/s, ω={omega:+.2f} rad/s")
