@@ -6,7 +6,6 @@ import numpy as np
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
-from std_msgs.msg import Float32
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 from visualization_msgs.msg import Marker, MarkerArray
@@ -14,11 +13,9 @@ from visualization_msgs.msg import Marker, MarkerArray
 class IMGDetector(Node):
     def __init__(self):
         super().__init__('IMGDetector')
-
+        #YOLO Import
         current_dir = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(current_dir, "yolov8n.pt")
-
-        # #YOLO 모델 불러오기 
         self.model = YOLO(model_path)
         self.model.fuse()               # small speed-up
         self.get_logger().info(f'Loaded YOLOv8 model: {model_path}')
@@ -61,12 +58,10 @@ class IMGDetector(Node):
 
         for det in results[0].boxes.cpu():
             if det.id is None:          # 트래킹 ID 없는 건 패스
-                
                 continue
             
             #Bounding Box 좌표
             x1, y1, x2, y2 = det.xyxy[0].tolist()
-
             cx = float((x1 + x2) * 0.5)     # numpy → py-float
             cy = float((y1 + y2) * 0.5)
             w  = float(x2 - x1)
@@ -102,10 +97,6 @@ class IMGDetector(Node):
                 seq_id = self.id_map[raw_id]
 
             label_txt = f"Person{seq_id}"
-
-            #Robot과 사람과의 거리 계산
-            #distance_m = (REAL_HEIGHT_M * FOCAL_LENGTH) / (h + 1e-6)  # h는 bbox 높이
-
             #self.get_logger().info(f"[{label_txt}]  conf={conf:.2f}  h={h:.1f}px  dist={distance_m:.2f} m")
 
             # ROS2 Detection 메시지
@@ -137,7 +128,6 @@ class IMGDetector(Node):
         self.pub_vis.publish(vis_msg)
         dt = (time.time() - t0)*1000
         self.get_logger().debug(f'inference {dt:.1f} ms, {len(det_array.detections)} objects')
-
 
 def main():
     rclpy.init()

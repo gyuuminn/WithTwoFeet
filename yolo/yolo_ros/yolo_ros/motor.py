@@ -9,7 +9,6 @@ from std_msgs.msg import UInt8
 class Humanfollower(Node):
     def __init__(self):
         super().__init__('human_follower')
-        
         qos_profile = QoSProfile(depth=10)
         
         # ---- 파라미터 (카메라 사양·사람 키) -----------------
@@ -81,14 +80,12 @@ class Humanfollower(Node):
         h_px  = det.bbox.size_y
         if h_px <= 0:
             return
-        
         dist  = (H_real * f_px) / h_px      # 단안(세로) 거리 추정
 
         # 로그
         #self.get_logger().info(f"[{label}]  bbox_h={h_px:.1f}px  ⇒  {dist:.2f} m")
 
         tgt_d  = self.get_parameter('target_dist').value
-
         err_d  = dist - tgt_d             # +면 멀다 / -면 가깝다
 
         # dead-zone(±10 cm) 안이면 멈춤
@@ -163,9 +160,6 @@ class Humanfollower(Node):
             # 디버그 로그 -----------------------------------------------------
             #self.get_logger().info(f"[{label}] d={dist:.2f} m  err={err_d:+.2f} "f"→ v={v:+.2f} m/s, ω={omega:+.2f} rad/s")
             # 한 프레임에 여러 사람이면 number가 가장 낮은 한 명만 제어하고 break
-
-        
-        
             
 def main():
     rclpy.init()

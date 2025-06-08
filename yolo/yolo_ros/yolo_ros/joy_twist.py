@@ -1,4 +1,5 @@
-import serial, rclpy, struct
+import rclpy
+import subprocess
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, UInt8
@@ -22,17 +23,20 @@ class JoyTwist(Node):
         self.joy_sub = self.create_subscription(Joy,'joy', self.joy_cb, qos_cmd)
 
         # 버튼·축 매핑 파라미터
-        self.declare_parameter("btn_cross", 1)
-        self.declare_parameter("btn_circle", 2)
-        self.declare_parameter("btn_triangle", 3)
-        self.declare_parameter("btn_square", 0)
+        self.declare_parameter("btn_cross", 0)
+        self.declare_parameter("btn_circle", 1)
+        self.declare_parameter("btn_triangle", 2)
+        self.declare_parameter("btn_square", 3)
         self.declare_parameter("axis_speed", 1)
         self.declare_parameter("axis_turn", 0)
-        self.declare_parameter("baxis_speed", 1) #십자
-        self.declare_parameter("baxis_turn", 0)
+        self.declare_parameter("baxis_speed", 7) #십자
+        self.declare_parameter("baxis_turn", 6)
+        self.declare_parameter("target_device", "192.168.4.171:5555")  # 스마트폰 ADB ID
+        self.prev_pressed = False
 
-        self.drive_enabled = True
-        self.en_pub.publish(Bool(data=True))       # 처음엔 ON 상태로 래치
+        self.drive_enabled = False
+        self.en_pub.publish(Bool(data=False))       # 처음엔 ON 상태로 래치
+        
 
     def joy_cb(self, msg: Joy):
         # 파라미터 읽기
@@ -44,6 +48,8 @@ class JoyTwist(Node):
         ax_turn = self.get_parameter("axis_turn").value
         bax_spd = self.get_parameter("baxis_speed").value # 십자
         bax_turn = self.get_parameter("baxis_turn").value
+        target = self.get_parameter("target_device").value
+        pressed = msg.buttons[btn_sq] == 1
 
         # -------- Enable 토글 --------
         # 버튼 edge 검출
@@ -54,12 +60,12 @@ class JoyTwist(Node):
         self._prev_toggle = msg.buttons[btn_cr]
 
         # 1) 아날로그 스틱 값
-        speed_raw = msg.axes[self.ax_spd]     # -1.0 ~ 1.0
-        turn_raw  = msg.axes[self.ax_turn]
+        speed_raw = msg.axes[ax_spd]     # -1.0 ~ 1.0
+        turn_raw  = msg.axes[ax_turn]
 
         # 2) D-패드 값 (눌렸을 때만  ±1.0 / 안 눌리면 0.0)
-        dpad_speed = msg.axes[self.bax_spd]
-        dpad_turn  = msg.axes[self.bax_turn]
+        dpad_speed = msg.axes[bax_spd]
+        dpad_turn  = msg.axes[bax_turn]
 
         # 3) D-패드가 입력을 ‘덮어쓰기’하도록 우선순위 부여
         if abs(dpad_speed) > 0.1:     # 0.1 은 데드존
@@ -68,8 +74,8 @@ class JoyTwist(Node):
             turn_raw = dpad_turn
 
         # 조이스틱 축 값 → 속도/조향값
-        speed = int(msg.axes[speed_raw]  * 100)   # -100 ~ 100
-        turn  = int(msg.axes[turn_raw] * 100)   # -100 ~ 100
+        speed = int(speed_raw  * 100)   # -100 ~ 100
+        turn  = int(turn_raw * 100)   # -100 ~ 100
 
         # 기본 모드
         mode = 0
@@ -88,6 +94,19 @@ class JoyTwist(Node):
         
         # 출력 및 실행
         self.get_logger().info(f"Speed: {speed}, Turn: {turn}, Mode: {mode}")
+
+        if pressed and not self.prev_pressed:
+            try:
+                subprocess.run(["adb", "-s", target, "shell", "input", "keyevent", "25"], check=True)
+                self.get_logger().info("Sent ADB shutter (volume down) command")
+            except subprocess.CalledProcessError as e:
+                self.get_logger().error(f"ADB command failed: {e}")
+        self.prev_pressed = pressed
+        
+        #self.get_logger().info(f"Button index: {btn_sq}, value: {msg.buttons[btn_sq]}")
+        #self.get_logger().info(f"Pressed: {pressed}, Prev pressed: {self.prev_pressed}")
+
+        
 
 
 def main():
