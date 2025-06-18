@@ -44,10 +44,15 @@ class MotorBridge(Node):
         # mode는 5,6,7,8,9 같은 수치라고 가정
         # 문자열 "6" → ASCII 바이트 0x36로 보내면 펌웨어의  if (RxTemp == '6') 와 매칭.
         msg = str(mode).encode('ascii')   # ex: mode=6 → b"6"
-        self.ser.write(msg)
+        frame   = bytes([self.HEADER, self.CMD_MODE]) + msg
+        self.ser.write(frame)
 
-        # 디버그
-        self.get_logger().info(f"TX ASCII → {msg!r}")
+        # 디버그 로그 (aa 10 36)
+        self.get_logger().info(f"TX → {frame.hex(' ')}")
+        
+
+        # # 디버그
+        # self.get_logger().info(f"TX ASCII → {msg!r}")
         
         # frame = struct.pack("<BBB", 0xAA, 0x10, mode)
         # self.ser.write(frame)
